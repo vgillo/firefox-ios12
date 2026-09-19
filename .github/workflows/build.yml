@@ -1,0 +1,96 @@
+name: Build Firefox iOS 12 IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install python@3.10 rust
+
+      - name: Check tools
+        run: |
+          python3 --version
+          rustc --version
+          cargo --version
+          xcodebuild -version
+
+      - name: Download Gecko
+        run: |
+          chmod +x ./tools/development/update-gecko.sh
+          ./tools/development/update-gecko.sh
+
+      - name: Apply Gecko patches
+        run: |
+          chmod +x ./tools/development/apply-patches.sh
+          ./tools/development/apply-patches.sh
+
+      - name: Build idevice
+        run: |
+          chmod +x ./tools/development/build-idevice.sh
+          ./tools/development/build-idevice.sh
+
+      - name: Build Gecko
+        run: |
+          chmod +x ./tools/development/build-gecko.sh
+          ./tools/development/build-gecko.sh
+
+      - name: Find Xcode project
+        run: |
+          find . -maxdepth 3 \
+            \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) \
+            -print
+
+      - name: Build IPA
+        run: |
+          mkdir -p build
+
+          xcodebuild \
+            -project Reynard.xcodeproj \
+            -scheme Reynard \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination generic/platform=iOS \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            build \
+            CONFIGURATION_BUILD_DIR="$PWD/build"
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+
+          APP=$(find build -maxdepth 1 -type d -name "*.app" | head -n 1)
+
+          if [ -z "$APP" ]; then
+            echo "Aucune application .app trouvée"
+            exit 1
+          fi
+
+          cp -R "$APP" Payload/
+
+          /usr/bin/zip -r Reynard-iOS12.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-iOS12
+          path: Reynard-iOS12.ipa
