@@ -24,8 +24,8 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install rustup-init ldid
-          rustup-init -y
+          brew install ldid
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source "$HOME/.cargo/env"
           rustc --version
           cargo --version
