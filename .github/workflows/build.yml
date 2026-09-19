@@ -1,96 +1,104 @@
-name: Build Firefox iOS 12 IPA
+name: Build Reynard iOS 12
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-15-intel
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: Select Xcode
+      - name: Show environment
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
+          sw_vers
           xcodebuild -version
+          python3 --version
+          git --version
 
       - name: Install dependencies
         run: |
           brew update
-          brew install python@3.10 rust
-
-      - name: Check tools
-        run: |
-          python3 --version
+          brew install rustup-init ldid
+          rustup-init -y
+          source "$HOME/.cargo/env"
           rustc --version
           cargo --version
-          xcodebuild -version
+          ldid -h
+
+      - name: Configure Rust
+        run: |
+          source "$HOME/.cargo/env"
+          rustup default stable
+          rustup target add aarch64-apple-ios
+
+      - name: Initialize submodules
+        run: |
+          git submodule update --init --recursive
 
       - name: Download Gecko
         run: |
-          chmod +x ./tools/development/update-gecko.sh
+          chmod +x tools/development/update-gecko.sh
           ./tools/development/update-gecko.sh
 
       - name: Apply Gecko patches
         run: |
-          chmod +x ./tools/development/apply-patches.sh
+          chmod +x tools/development/apply-patches.sh
           ./tools/development/apply-patches.sh
 
       - name: Build idevice
         run: |
-          chmod +x ./tools/development/build-idevice.sh
+          source "$HOME/.cargo/env"
+          chmod +x tools/development/build-idevice.sh
           ./tools/development/build-idevice.sh
 
       - name: Build Gecko
         run: |
-          chmod +x ./tools/development/build-gecko.sh
+          source "$HOME/.cargo/env"
+          chmod +x tools/development/build-gecko.sh
           ./tools/development/build-gecko.sh
 
-      - name: Find Xcode project
+      - name: Build Reynard
         run: |
-          find . -maxdepth 3 \
-            \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) \
-            -print
-
-      - name: Build IPA
-        run: |
-          mkdir -p build
-
-          xcodebuild \
-            -project Reynard.xcodeproj \
+          xcodebuild build \
+            -project browser/Reynard.xcodeproj \
             -scheme Reynard \
-            -configuration Release \
+            -configuration Debug \
             -sdk iphoneos \
-            -destination generic/platform=iOS \
+            -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=NO \
-            build \
-            CONFIGURATION_BUILD_DIR="$PWD/build"
+            CODE_SIGN_IDENTITY="-" \
+            -derivedDataPath "$RUNNER_TEMP/ReynardDD"
 
-      - name: Package IPA
+      - name: Sign application with ldid
         run: |
-          mkdir -p Payload
+          APP="$RUNNER_TEMP/ReynardDD/Build/Products/Debug-iphoneos/Reynard.app"
 
-          APP=$(find build -maxdepth 1 -type d -name "*.app" | head -n 1)
-
-          if [ -z "$APP" ]; then
-            echo "Aucune application .app trouvée"
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: Reynard.app introuvable"
             exit 1
           fi
 
-          cp -R "$APP" Payload/
+          ldid \
+            -Sbrowser/Reynard/Entitlements/Reynard.private.entitlements \
+            "$APP/Reynard"
 
-          /usr/bin/zip -r Reynard-iOS12.ipa Payload
+      - name: Create IPA
+        run: |
+          APP="$RUNNER_TEMP/ReynardDD/Build/Products/Debug-iphoneos/Reynard.app"
+
+          mkdir -p Payload
+          cp -R "$APP" Payload/Reynard.app
+
+          zip -r Reynard-iOS12.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Reynard-iOS12
+          name: Reynard-iOS12-IPA
           path: Reynard-iOS12.ipa
